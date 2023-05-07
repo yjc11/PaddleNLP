@@ -162,8 +162,6 @@ class DataProcess:
                             ocr_results['text_direction'][0],
                             ocr_results['text_direction'][1],
                         )
-                        if pagename == '中南建-612_11_3621738723_page_027':
-                            print(angle)
 
                     # 初始化当前page的结果
                     tmp_dict[pagename][e['label'][0]] = {
