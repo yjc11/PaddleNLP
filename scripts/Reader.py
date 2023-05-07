@@ -6,7 +6,7 @@ from collections import defaultdict
 import logging
 import sys
 
-sys.path.append('/home/youjiachen/PaddleNLP_baidu/workspace')
+sys.path.append('/home/youjiachen/PaddleNLP/paddlenlp')
 from utils.doc_match_label import match_label_v1
 
 
@@ -58,7 +58,7 @@ class DataProcess:
                         for result in result_list:
                             if result['end'] - result['start'] > max_content_len:
                                 logging.warning(
-                                    'result['end'] - result ['start'] exceeds max_content_len, which will result in no valid instance being returned'
+                                    'result["end"] - result ["start"] exceeds max_content_len, which will result in no valid instance being returned'
                                 )
                             if (
                                 result['start'] + 1 <= max_content_len < result['end']
@@ -141,7 +141,7 @@ class DataProcess:
     def match_label(self, label_file):
         # 打开label文件
         with open(label_file, 'r', encoding='utf-8') as f:
-            raw_example= json.loads(f.read())
+            raw_example = json.loads(f.read())
 
         rs = list()
         tmp_dict = dict()
@@ -152,7 +152,7 @@ class DataProcess:
             for e in line['annotations']:
                 if not len(e):  # 无标签则跳过
                     continue
-                
+
                 pagename = e['page_name']
                 # todo:需要判断与上次page是否相同，相同则不需要重新读取ocr结果
                 if pagename != cur_pagename:
@@ -160,7 +160,7 @@ class DataProcess:
                         ocr_results = json.load(f)
                         ocr_bboxes = ocr_results['bboxes']
                         ocr_texts = ocr_results['texts']
-                    
+
                     # 初始化当前page的结果
                     tmp_dict[pagename] = {
                         'content': ocr_texts,
@@ -169,7 +169,7 @@ class DataProcess:
                         'image': pagename,
                         'bbox': None,
                     }
-                
+
                 # match by gt and ocr rotate box and text
                 gt_bbox = e['box']
                 gt_text = e['text'][0]
@@ -203,10 +203,9 @@ class DataProcess:
         return rs
 
 
-if __name__=="__main__":
-        
-    ocr_file = '/home/youjiachen/PaddleNLP_baidu/workspace/longtext_ie/datasets/contract/dataelem_ocr_res_rotateupright_true'
-    label_file = '/home/youjiachen/PaddleNLP_baidu/workspace/longtext_ie/datasets/contract_v1.1/processed_labels.json'
+if __name__ == "__main__":
+    ocr_file = '/home/youjiachen/workspace/longtext_ie/datasets/contract_v1.0/dataelem_ocr_res_rotateupright_true'
+    label_file = '/home/youjiachen/workspace/longtext_ie/datasets/contract_v1.1/processed_labels.json'
     data_processer = DataProcess(ocr_file)
     res = data_processer.match_label(label_file)
     print(len(res))
