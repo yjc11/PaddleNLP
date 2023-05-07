@@ -2,9 +2,10 @@ import os
 import json
 from pathlib import Path
 from collections import defaultdict
-
+from copy import deepcopy
 import logging
 import sys
+import math
 
 sys.path.append('/home/youjiachen/PaddleNLP/paddlenlp')
 from utils.doc_match_label import match_label_v1
@@ -143,29 +144,41 @@ class DataProcess:
         with open(label_file, 'r', encoding='utf-8') as f:
             raw_example = json.loads(f.read())
 
-        rs = list()
-        tmp_dict = dict()
+        tmp_dict = defaultdict(dict)
+        c = 0
         for line in raw_example:
-            items = defaultdict(list)
-            cur_pagename = ''
-
             for e in line['annotations']:
                 if not len(e):  # 无标签则跳过
                     continue
 
                 pagename = e['page_name']
                 # todo:需要判断与上次page是否相同，相同则不需要重新读取ocr结果
-                if pagename != cur_pagename:
+                if pagename not in tmp_dict:
                     with open(self.ocr_result / f'{pagename}.json', 'r') as f:
                         ocr_results = json.load(f)
                         ocr_bboxes = ocr_results['bboxes']
                         ocr_texts = ocr_results['texts']
+                        angle = self.compute_angle(
+                            ocr_results['text_direction'][0],
+                            ocr_results['text_direction'][1],
+                        )
+                        if pagename == '中南建-612_11_3621738723_page_027':
+                            print(angle)
 
                     # 初始化当前page的结果
-                    tmp_dict[pagename] = {
+                    tmp_dict[pagename][e['label'][0]] = {
                         'content': ocr_texts,
                         'result_list': [],
-                        'prompt': '',
+                        'prompt': e['label'][0],
+                        'image': pagename,
+                        'bbox': None,
+                    }
+
+                elif e['label'][0] not in tmp_dict[pagename]:
+                    tmp_dict[pagename][e['label'][0]] = {
+                        'content': ocr_texts,
+                        'result_list': [],
+                        'prompt': e['label'][0],
                         'image': pagename,
                         'bbox': None,
                     }
@@ -173,41 +186,39 @@ class DataProcess:
                 # match by gt and ocr rotate box and text
                 gt_bbox = e['box']
                 gt_text = e['text'][0]
-                offsets = match_label_v1(gt_bbox, gt_text, ocr_bboxes, ocr_texts)
+                offsets = match_label_v1(
+                    deepcopy(gt_bbox), deepcopy(gt_text), ocr_bboxes, ocr_texts
+                )
 
+                if len(offsets) == 0:
+                    pass
+                    # print(f'gt_text: {gt_text}')
                 if len(offsets) > 0:
-                    items['entities'].append(
+                    c += 1
+                    tmp_dict[pagename][e['label'][0]]['result_list'].append(
                         {
                             'id': e['id'],
                             'text': gt_text,
-                            'start_offset': offsets[0][0],
-                            'end_offset': offsets[0][1],
-                            'label': e['label'],
+                            'start': offsets[0][0],
+                            'end': offsets[0][1],
                         }
                     )
-                    # ent_ids.append(e['id'])
+        print(c)
+        return tmp_dict
 
-                cur_pagename = pagename
-
-            # for r in line['relations']:
-            #     if r['from_id'] in ent_ids and r['to_id'] in ent_ids:
-            #         items['relations'].append(
-            #             {
-            #                 'id': r['from_id'] + '-' + r['to_id'],
-            #                 'from_id': r['from_id'],
-            #                 'to_id': r['to_id'],
-            #             }
-            #         )
-
-            rs.append(items)
-        return rs
+    @staticmethod
+    def compute_angle(cos, sin):
+        angle = math.atan2(sin, cos) * 180 / math.pi
+        return angle
 
 
 if __name__ == "__main__":
     ocr_file = '/home/youjiachen/workspace/longtext_ie/datasets/contract_v1.0/dataelem_ocr_res_rotateupright_true'
-    label_file = '/home/youjiachen/workspace/longtext_ie/datasets/contract_v1.1/processed_labels.json'
+    label_file = '/home/youjiachen/workspace/longtext_ie/datasets/contract_v1.1/processed_labels_5_7.json'
     data_processer = DataProcess(ocr_file)
     res = data_processer.match_label(label_file)
     print(len(res))
-    with open('./xxxx.json', 'w') as f:
+    with open(
+        '/home/youjiachen/workspace/longtext_ie/datasets/reader_input.json', 'w'
+    ) as f:
         json.dump(res, f, indent=4, ensure_ascii=False)
