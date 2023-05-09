@@ -1,19 +1,27 @@
 import os
 import json
-from pathlib import Path
-from collections import defaultdict
-from copy import deepcopy
 import logging
 import sys
 import math
+import cv2
+
+import numpy as np
+
+from pathlib import Path
+from collections import defaultdict
+from tqdm import tqdm
+from copy import deepcopy
 
 sys.path.append('/home/youjiachen/PaddleNLP/paddlenlp')
+sys.path.append(Path(__file__) / '..')
 from utils.doc_match_label import match_label_v1
+from preprocess import rotate_box
 
 
 class DataProcess:
-    def __init__(self, ocr_result) -> None:
+    def __init__(self, ocr_result, output_path):
         self.ocr_result = Path(ocr_result)
+        self.output_path = Path(output_path)
 
     @staticmethod
     def reader(data_path, max_seq_len=512):
@@ -26,10 +34,12 @@ class DataProcess:
                 all_images = json.load(f)
         else:
             all_images = None
-
+        refined_list = []
+        json_lines = []
         with open(data_path, 'r', encoding='utf-8') as f:
             for line in f:
                 json_line = json.loads(line)
+                page = json_line['pagename']
                 content = json_line['content'].strip()
                 prompt = json_line['prompt']
                 boxes = json_line.get('bbox', None)
@@ -48,11 +58,13 @@ class DataProcess:
                         'The value of max_seq_len is too small, please set a larger value'
                     )
                 max_content_len = max_seq_len - len(prompt) - summary_token_num
+
                 if len(content) <= max_content_len:
-                    yield json_line
+                    refined_list.append(json_line)
+                    # yield json_line
                 else:
                     result_list = json_line['result_list']
-                    json_lines = []
+
                     accumulate = 0
                     while True:
                         cur_result_list = []
@@ -96,12 +108,14 @@ class DataProcess:
                                 'prompt': prompt,
                                 'bbox': cur_boxes,
                                 'image': image,
+                                'pagename': page,
                             }
                         else:
                             json_line = {
                                 'content': cur_content,
                                 'result_list': cur_result_list,
                                 'prompt': prompt,
+                                'pagename': page,
                             }
                         json_lines.append(json_line)
 
@@ -122,75 +136,72 @@ class DataProcess:
                                     'prompt': prompt,
                                     'bbox': res_boxes,
                                     'image': image,
+                                    'pagename': page,
                                 }
                             else:
                                 json_line = {
                                     'content': res_content,
                                     'result_list': result_list,
                                     'prompt': prompt,
+                                    'pagename': page,
                                 }
 
                             json_lines.append(json_line)
                             break
                         else:
                             content = res_content
-                            boxes = res_boxes
+                            # boxes = res_boxes
 
-                    for json_line in json_lines:
-                        yield json_line
+        return refined_list, json_lines
 
     def match_label(self, label_file):
-        # 打开label文件
         with open(label_file, 'r', encoding='utf-8') as f:
             raw_example = json.loads(f.read())
 
         tmp_dict = defaultdict(dict)
         c = 0
-        for line in raw_example:
+        empty = 0
+        for line in tqdm(raw_example):
             for e in line['annotations']:
                 if not len(e):  # 无标签则跳过
                     continue
-
                 pagename = e['page_name']
-                # todo:需要判断与上次page是否相同，相同则不需要重新读取ocr结果
                 if pagename not in tmp_dict:
                     with open(self.ocr_result / f'{pagename}.json', 'r') as f:
                         ocr_results = json.load(f)
                         ocr_bboxes = ocr_results['bboxes']
                         ocr_texts = ocr_results['texts']
-                        angle = self.compute_angle(
-                            ocr_results['text_direction'][0],
-                            ocr_results['text_direction'][1],
-                        )
+                        image_size = ocr_results['image_size']
+                        rotate_angle = ocr_results['rotate_angle']
 
                     # 初始化当前page的结果
                     tmp_dict[pagename][e['label'][0]] = {
-                        'content': ocr_texts,
+                        'content': ''.join(ocr_texts),
                         'result_list': [],
                         'prompt': e['label'][0],
-                        'image': pagename,
+                        'pagename': pagename,
+                        'image': None,
                         'bbox': None,
                     }
 
                 elif e['label'][0] not in tmp_dict[pagename]:
                     tmp_dict[pagename][e['label'][0]] = {
-                        'content': ocr_texts,
+                        'content': ''.join(ocr_texts),
                         'result_list': [],
                         'prompt': e['label'][0],
-                        'image': pagename,
+                        'pagename': pagename,
+                        'image': None,
                         'bbox': None,
                     }
 
                 # match by gt and ocr rotate box and text
                 gt_bbox = e['box']
+                _gt_box = rotate_box(np.array(gt_bbox), image_size, rotate_angle)
                 gt_text = e['text'][0]
                 offsets = match_label_v1(
-                    deepcopy(gt_bbox), deepcopy(gt_text), ocr_bboxes, ocr_texts
+                    deepcopy(_gt_box), deepcopy(gt_text), ocr_bboxes, ocr_texts
                 )
 
-                if len(offsets) == 0:
-                    pass
-                    # print(f'gt_text: {gt_text}')
                 if len(offsets) > 0:
                     c += 1
                     tmp_dict[pagename][e['label'][0]]['result_list'].append(
@@ -201,22 +212,65 @@ class DataProcess:
                             'end': offsets[0][1],
                         }
                     )
-        print(c)
-        return tmp_dict
+
+                else:
+                    empty += 1
+
+        # convert format to reader format
+        res = [j for i in tmp_dict.values() for j in i.values()]
+
+        print('匹配上的标注：', c)
+        print('未匹配上的标注：', empty)
+
+        with open(self.output_path / 'reader_input.txt', 'w') as f:
+            for i in res:
+                f.write(json.dumps(i, ensure_ascii=False) + "\n")
+
+        return res
 
     @staticmethod
     def compute_angle(cos, sin):
         angle = math.atan2(sin, cos) * 180 / math.pi
         return angle
 
+    @staticmethod
+    def refine_box(r, w, h):
+        """
+        box = [[x1, y1], [x2, y2], [x3, y3], [x4, y4]]
+        """
+        angle = r['rotation']
+        R = cv2.getRotationMatrix2D(angle=angle, center=(w / 2, h / 2), scale=1)
+        r['box'] = np.array(r['box']).reshape(-1, 2)
+        box_hom = np.hstack((r['box'], np.ones((4, 1))))
+        box_rotated = np.dot(R, box_hom.T).T[:, :2]
+        refined_box = box_rotated.tolist()
+
+        return refined_box
+
 
 if __name__ == "__main__":
-    ocr_file = '/home/youjiachen/workspace/longtext_ie/datasets/contract_v1.0/dataelem_ocr_res_rotateupright_true'
+    ocr_file_path = '/home/youjiachen/workspace/longtext_ie/datasets/contract_v1.0/dataelem_ocr_res_rotateupright_true'
     label_file = '/home/youjiachen/workspace/longtext_ie/datasets/contract_v1.1/processed_labels_5_7.json'
-    data_processer = DataProcess(ocr_file)
+    output_path = (
+        '/home/youjiachen/workspace/longtext_ie/datasets/contract_v1.1/preprocess_ds'
+    )
+    data_processer = DataProcess(ocr_file_path, output_path)
     res = data_processer.match_label(label_file)
-    print(len(res))
-    with open(
-        '/home/youjiachen/workspace/longtext_ie/datasets/reader_input.json', 'w'
-    ) as f:
-        json.dump(res, f, indent=4, ensure_ascii=False)
+    # print(len(res))
+    # with open(
+    #     '/home/youjiachen/workspace/longtext_ie/datasets/reader_input.json', 'w'
+    # ) as f:
+    #     json.dump(res, f, indent=4, ensure_ascii=False)
+
+    # with open('/home/youjiachen/workspace/longtext_ie/datasets/ceshi.txt', 'w') as f:
+    #     for i in res:
+    #         f.write(json.dumps(i, ensure_ascii=False) + "\n")
+
+    # output_path = '/home/youjiachen/workspace/longtext_ie/datasets/contract_v1.1'
+    # file_path = '/home/youjiachen/workspace/longtext_ie/datasets/ceshi.txt'
+    # refined_list, json_lines = data_processer.reader(file_path)
+
+    # with open(output_path + '/reader_output.json', 'w') as f:
+    #     json.dump(json_lines, f, indent=4, ensure_ascii=False)
+    # print(refined_list)
+    # print(json_lines)
