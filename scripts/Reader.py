@@ -8,10 +8,11 @@ import cv2
 import networkx as nx
 import numpy as np
 
-from pathlib import Path
-from collections import defaultdict
 from tqdm import tqdm
 from copy import deepcopy
+from pathlib import Path
+from collections import defaultdict
+
 
 sys.path.append('/home/youjiachen/PaddleNLP/paddlenlp')
 sys.path.append(Path(__file__) / '..')
@@ -23,6 +24,12 @@ class DataProcess:
     def __init__(self, ocr_result, output_path):
         self.ocr_result = Path(ocr_result)
         self.output_path = Path(output_path)
+        self.all_ocr_result_pagenames = set(
+            Path(i).stem for i in os.listdir(self.ocr_result)
+        )
+
+    def __len__(self):
+        return len(self.all_ocr_result_pagenames)
 
     @staticmethod
     def reader(data_path, max_seq_len=512):
@@ -160,16 +167,16 @@ class DataProcess:
         tmp_dict = defaultdict(dict)
         c = 0
         empty = 0
+        gt_pages = set()
         for line in tqdm(raw_example):
-            ent_ids = []
-
-            cur_pages = list()
+            # cur_pages = list()
             for e in line['annotations']:
                 if not len(e):  # 无标签则跳过
                     continue
                 pagename = e['page_name']
                 if pagename not in tmp_dict:
-                    cur_pages.append(pagename)
+                    # cur_pages.append(pagename)
+                    gt_pages.add(pagename)
 
                     with open(self.ocr_result / f'{pagename}.json', 'r') as f:
                         ocr_results = json.load(f)
@@ -186,7 +193,6 @@ class DataProcess:
                         'pagename': pagename,
                         'image': None,
                         'bbox': None,
-                        'relation': '',
                     }
 
                 elif e['label'][0] not in tmp_dict[pagename]:
@@ -197,7 +203,6 @@ class DataProcess:
                         'pagename': pagename,
                         'image': None,
                         'bbox': None,
-                        'relation': '',
                     }
 
                 # match by gt and ocr rotate box and text
@@ -219,26 +224,28 @@ class DataProcess:
                             'end': offsets[0][1],
                         }
                     )
-                    ent_ids.append(e["id"])
                 else:
                     empty += 1
 
             # todo:此处为具有关系的字段start和end合并代码，待完成
-            if merge:
-                # 1.得到当前pdf的关系组
-                relation_sets = self._get_relation_set(line['relations'])
+            # if merge:
+            #     # 1.得到当前pdf的关系组
+            #     relation_sets = self._get_relation_set(line['relations'])
 
-                # 2.逐页根据关系合并gt
-                for page in cur_pages:
-                    raw_result_list = tmp_dict[page][e['label'][0]]['result_list']
-                    id_2_gt = {gt['id']: gt for gt in raw_result_list}
-                    cur_id = set(id_2_gt.keys())
-                    for relation_set in relation_sets:
-                        if cur_id.intersection(set(relation_set)):
-                            pass
+            #     # 2.逐页根据关系合并gt
+            #     for page in cur_pages:
+            #         raw_result_list = tmp_dict[page][e['label'][0]]['result_list']
+            #         id_2_gt = {gt['id']: gt for gt in raw_result_list}
+            #         cur_id = set(id_2_gt.keys())
+            #         for relation_set in relation_sets:
+            #             if cur_id.intersection(set(relation_set)):
+            #                 pass
+
+        # 添加无gt页面内容
+        final_dict = self._add_negative_examples(tmp_dict, gt_pages)
 
         # convert format to reader format
-        res = [j for i in tmp_dict.values() for j in i.values()]
+        res = [j for i in final_dict.values() for j in i.values()]
 
         print('匹配上的标注：', c)
         print('未匹配上的标注：', empty)
@@ -260,6 +267,24 @@ class DataProcess:
             with open(os.path.join(save_path, 'reader_output.txt'), 'w') as f:
                 for i in tqdm(data_generator):
                     f.write(json.dumps(i, ensure_ascii=False) + "\n")
+
+    def _add_negative_examples(self, tmp_dict, gt_pages):
+        neg_pages = self.all_ocr_result_pagenames - gt_pages
+        for neg_page in neg_pages:
+            with open(os.path.join(self.ocr_result, f'{neg_page}.json'), 'r') as f:
+                ocr_results = json.load(f)
+                ocr_texts = ocr_results['texts']
+
+            tmp_dict[neg_page]['无gt'] = {
+                'content': ''.join(ocr_texts),
+                'result_list': [],
+                'prompt': '',
+                'pagename': neg_page,
+                'image': None,
+                'bbox': None,
+            }
+
+        return tmp_dict
 
     @staticmethod
     def compute_angle(cos, sin):
@@ -301,6 +326,8 @@ if __name__ == "__main__":
     )
     label_file = '/home/youjiachen/workspace/longtext_ie/datasets/contract_v1.1/processed_labels_5_7.json'
     data_processer = DataProcess(ocr_file_path, output_path)
+    # print(data_processer.all_ocr_result_pagenames)
+    # print(len(data_processer))
     # res = data_processer.match_label(label_file)  # 匹配标注
 
     # 512 切分
