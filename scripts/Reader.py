@@ -1,9 +1,9 @@
 import os
 import json
 import logging
-import sys
 import math
 import cv2
+import sys
 
 import networkx as nx
 import numpy as np
@@ -12,7 +12,7 @@ from tqdm import tqdm
 from copy import deepcopy
 from pathlib import Path
 from collections import defaultdict
-
+from sklearn.model_selection import train_test_split
 
 sys.path.append('/home/youjiachen/PaddleNLP/paddlenlp')
 sys.path.append(Path(__file__) / '..')
@@ -24,12 +24,10 @@ class DataProcess:
     def __init__(self, ocr_result, output_path):
         self.ocr_result = Path(ocr_result)
         self.output_path = Path(output_path)
-        self.all_ocr_result_pagenames = set(
-            Path(i).stem for i in os.listdir(self.ocr_result)
-        )
+        self.all_ocr_pages = set(Path(i).stem for i in os.listdir(self.ocr_result))
 
     def __len__(self):
-        return len(self.all_ocr_result_pagenames)
+        return len(self.all_ocr_pages)
 
     @staticmethod
     def reader(data_path, max_seq_len=512):
@@ -260,29 +258,29 @@ class DataProcess:
         data_generator = self.reader(f'{self.output_path}/reader_input.txt')
 
         if not save_path:
-            with open(f'{self.output_path}/reader_output.txt', 'w') as f:
+            with open(self.output_path / ' reader_output.txt', 'w') as f:
                 for i in tqdm(data_generator):
                     f.write(json.dumps(i, ensure_ascii=False) + "\n")
         else:
-            with open(os.path.join(save_path, 'reader_output.txt'), 'w') as f:
+            with open(Path(save_path) / 'reader_output.txt', 'w') as f:
                 for i in tqdm(data_generator):
                     f.write(json.dumps(i, ensure_ascii=False) + "\n")
 
     def _add_negative_examples(self, tmp_dict, gt_pages):
-        neg_pages = self.all_ocr_result_pagenames - gt_pages
+        neg_pages = self.all_ocr_pages - gt_pages
         for neg_page in neg_pages:
             with open(os.path.join(self.ocr_result, f'{neg_page}.json'), 'r') as f:
                 ocr_results = json.load(f)
                 ocr_texts = ocr_results['texts']
 
-            tmp_dict[neg_page]['无gt'] = {
-                'content': ''.join(ocr_texts),
-                'result_list': [],
-                'prompt': '',
-                'pagename': neg_page,
-                'image': None,
-                'bbox': None,
-            }
+                tmp_dict[neg_page]['无gt'] = {
+                    'content': ''.join(ocr_texts),
+                    'result_list': [],
+                    'prompt': '无gt',
+                    'pagename': neg_page,
+                    'image': None,
+                    'bbox': None,
+                }
 
         return tmp_dict
 
@@ -318,6 +316,19 @@ class DataProcess:
             r_set.append(sorted_nodes)
         return r_set
 
+    def create_ds(self):
+        pdf_names = {i[:-9] for i in self.all_ocr_pages}
+        # print(pdf_names)
+        train_ds, val_ds = train_test_split(
+            list(pdf_names),
+            train_size=0.8,
+            test_size=0.2,
+            shuffle=True,
+            random_state=144,
+        )
+        print('train:', len(train_ds))
+        print('val:', len(val_ds))
+
 
 if __name__ == "__main__":
     ocr_file_path = '/home/youjiachen/workspace/longtext_ie/datasets/contract_v1.0/dataelem_ocr_res_rotateupright_true'
@@ -326,27 +337,6 @@ if __name__ == "__main__":
     )
     label_file = '/home/youjiachen/workspace/longtext_ie/datasets/contract_v1.1/processed_labels_5_7.json'
     data_processer = DataProcess(ocr_file_path, output_path)
-    # print(data_processer.all_ocr_result_pagenames)
-    # print(len(data_processer))
-    # res = data_processer.match_label(label_file)  # 匹配标注
-
-    # 512 切分
-    data_processer.save_data()
-
-    # with open(
-    #     '/home/youjiachen/workspace/longtext_ie/datasets/reader_input.json', 'w'
-    # ) as f:
-    #     json.dump(res, f, indent=4, ensure_ascii=False)
-
-    # with open('/home/youjiachen/workspace/longtext_ie/datasets/ceshi.txt', 'w') as f:
-    #     for i in res:
-    #         f.write(json.dumps(i, ensure_ascii=False) + "\n")
-
-    # output_path = '/home/youjiachen/workspace/longtext_ie/datasets/contract_v1.1'
-    # file_path = '/home/youjiachen/workspace/longtext_ie/datasets/ceshi.txt'
-    # refined_list, json_lines = data_processer.reader(file_path)
-
-    # with open(output_path + '/reader_output.json', 'w') as f:
-    #     json.dump(json_lines, f, indent=4, ensure_ascii=False)
-    # print(refined_list)
-    # print(json_lines)
+    data_processer.match_label(label_file)  # 匹配标注
+    data_processer.save_data()  # 512 切分后保存
+    data_processer.create_ds()  # 训练文件
