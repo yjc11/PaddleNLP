@@ -5,6 +5,7 @@ import sys
 import math
 import cv2
 
+import networkx as nx
 import numpy as np
 
 from pathlib import Path
@@ -154,7 +155,7 @@ class DataProcess:
 
         return refined_list, json_lines
 
-    def match_label(self, label_file):
+    def match_label(self, label_file, merge=None):
         with open(label_file, 'r', encoding='utf-8') as f:
             raw_example = json.loads(f.read())
 
@@ -162,11 +163,16 @@ class DataProcess:
         c = 0
         empty = 0
         for line in tqdm(raw_example):
+            ent_ids = []
+
+            cur_pages = list()
             for e in line['annotations']:
                 if not len(e):  # 无标签则跳过
                     continue
                 pagename = e['page_name']
                 if pagename not in tmp_dict:
+                    cur_pages.append(pagename)
+
                     with open(self.ocr_result / f'{pagename}.json', 'r') as f:
                         ocr_results = json.load(f)
                         ocr_bboxes = ocr_results['bboxes']
@@ -182,6 +188,7 @@ class DataProcess:
                         'pagename': pagename,
                         'image': None,
                         'bbox': None,
+                        'relation': '',
                     }
 
                 elif e['label'][0] not in tmp_dict[pagename]:
@@ -192,6 +199,7 @@ class DataProcess:
                         'pagename': pagename,
                         'image': None,
                         'bbox': None,
+                        'relation': '',
                     }
 
                 # match by gt and ocr rotate box and text
@@ -202,6 +210,7 @@ class DataProcess:
                     deepcopy(_gt_box), deepcopy(gt_text), ocr_bboxes, ocr_texts
                 )
 
+                # 写入匹配结果
                 if len(offsets) > 0:
                     c += 1
                     tmp_dict[pagename][e['label'][0]]['result_list'].append(
@@ -212,9 +221,23 @@ class DataProcess:
                             'end': offsets[0][1],
                         }
                     )
-
+                    ent_ids.append(e["id"])
                 else:
                     empty += 1
+
+            # todo:此处为具有关系的字段start和end合并代码，待完成
+            if merge:
+                # 1.得到当前pdf的关系组
+                relation_sets = self.get_relation_set(line['relations'])
+
+                # 2.逐页根据关系合并gt
+                for page in cur_pages:
+                    raw_result_list = tmp_dict[page][e['label'][0]]['result_list']
+                    id_2_gt = {gt['id']: gt for gt in raw_result_list}
+                    cur_id = set(id_2_gt.keys())
+                    for relation_set in relation_sets:
+                        if cur_id.intersection(set(relation_set)):
+                            pass
 
         # convert format to reader format
         res = [j for i in tmp_dict.values() for j in i.values()]
@@ -247,16 +270,30 @@ class DataProcess:
 
         return refined_box
 
+    @staticmethod
+    def get_relation_set(relations):
+        G = nx.DiGraph()
+        for relation in relations:
+            from_id, to_id = relation['from_id'], relation['to_id']
+            G.add_edge(from_id, to_id)
+        r_set = []
+        for component in nx.connected_components(G.to_undirected()):
+            # 对每个连通分量进行拓扑排序
+            sorted_nodes = list(nx.topological_sort(G.subgraph(component)))
+            r_set.append(sorted_nodes)
+        return r_set
+
 
 if __name__ == "__main__":
     ocr_file_path = '/home/youjiachen/workspace/longtext_ie/datasets/contract_v1.0/dataelem_ocr_res_rotateupright_true'
-    label_file = '/home/youjiachen/workspace/longtext_ie/datasets/contract_v1.1/processed_labels_5_7.json'
     output_path = (
         '/home/youjiachen/workspace/longtext_ie/datasets/contract_v1.1/preprocess_ds'
     )
+    label_file = '/home/youjiachen/workspace/longtext_ie/datasets/contract_v1.1/processed_labels_5_7.json'
     data_processer = DataProcess(ocr_file_path, output_path)
-    res = data_processer.match_label(label_file)
-    # print(len(res))
+    res = data_processer.match_label(label_file)  # 匹配标注
+
+    print(len(res))
     # with open(
     #     '/home/youjiachen/workspace/longtext_ie/datasets/reader_input.json', 'w'
     # ) as f:
