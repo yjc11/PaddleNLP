@@ -35,7 +35,6 @@ class DataProcess:
                 all_images = json.load(f)
         else:
             all_images = None
-        refined_list = []
         json_lines = []
         with open(data_path, 'r', encoding='utf-8') as f:
             for line in f:
@@ -61,7 +60,7 @@ class DataProcess:
                 max_content_len = max_seq_len - len(prompt) - summary_token_num
 
                 if len(content) <= max_content_len:
-                    refined_list.append(json_line)
+                    json_lines.append(json_line)
                     # yield json_line
                 else:
                     result_list = json_line['result_list']
@@ -152,8 +151,7 @@ class DataProcess:
                         else:
                             content = res_content
                             # boxes = res_boxes
-
-        return refined_list, json_lines
+            return json_lines
 
     def match_label(self, label_file, merge=None):
         with open(label_file, 'r', encoding='utf-8') as f:
@@ -228,7 +226,7 @@ class DataProcess:
             # todo:此处为具有关系的字段start和end合并代码，待完成
             if merge:
                 # 1.得到当前pdf的关系组
-                relation_sets = self.get_relation_set(line['relations'])
+                relation_sets = self._get_relation_set(line['relations'])
 
                 # 2.逐页根据关系合并gt
                 for page in cur_pages:
@@ -251,18 +249,30 @@ class DataProcess:
 
         return res
 
+    def save_data(self, save_path=None):
+        data_generator = self.reader(f'{self.output_path}/reader_input.txt')
+
+        if not save_path:
+            with open(f'{self.output_path}/reader_output.txt', 'w') as f:
+                for i in tqdm(data_generator):
+                    f.write(json.dumps(i, ensure_ascii=False) + "\n")
+        else:
+            with open(os.path.join(save_path, 'reader_output.txt'), 'w') as f:
+                for i in tqdm(data_generator):
+                    f.write(json.dumps(i, ensure_ascii=False) + "\n")
+
     @staticmethod
     def compute_angle(cos, sin):
         angle = math.atan2(sin, cos) * 180 / math.pi
         return angle
 
     @staticmethod
-    def refine_box(r, w, h):
+    def refine_box(r, img_w, img_h):
         """
         box = [[x1, y1], [x2, y2], [x3, y3], [x4, y4]]
         """
         angle = r['rotation']
-        R = cv2.getRotationMatrix2D(angle=angle, center=(w / 2, h / 2), scale=1)
+        R = cv2.getRotationMatrix2D(angle=angle, center=(img_w / 2, img_h / 2), scale=1)
         r['box'] = np.array(r['box']).reshape(-1, 2)
         box_hom = np.hstack((r['box'], np.ones((4, 1))))
         box_rotated = np.dot(R, box_hom.T).T[:, :2]
@@ -271,7 +281,7 @@ class DataProcess:
         return refined_box
 
     @staticmethod
-    def get_relation_set(relations):
+    def _get_relation_set(relations):
         G = nx.DiGraph()
         for relation in relations:
             from_id, to_id = relation['from_id'], relation['to_id']
@@ -291,9 +301,11 @@ if __name__ == "__main__":
     )
     label_file = '/home/youjiachen/workspace/longtext_ie/datasets/contract_v1.1/processed_labels_5_7.json'
     data_processer = DataProcess(ocr_file_path, output_path)
-    res = data_processer.match_label(label_file)  # 匹配标注
+    # res = data_processer.match_label(label_file)  # 匹配标注
 
-    print(len(res))
+    # 512 切分
+    data_processer.save_data()
+
     # with open(
     #     '/home/youjiachen/workspace/longtext_ie/datasets/reader_input.json', 'w'
     # ) as f:
