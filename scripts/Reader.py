@@ -26,6 +26,7 @@ class DataProcess:
         self.ocr_result = Path(ocr_result)
         self.output_path = Path(output_path)
         self.all_ocr_pages = sorted(set(i.stem for i in self.ocr_result.glob('[!.]*')))
+        self.all_pdf_names = sorted({i.split('_page_')[0] for i in self.all_ocr_pages})
         self.reader_output = None
         with open(cls_file_path, 'r') as f:
             self.cls = json.load(f)
@@ -61,7 +62,7 @@ class DataProcess:
                 if boxes is not None and image is not None:
                     summary_token_num = 4
                 else:
-                    summary_token_num = 3
+                    summary_token_num = 3  #
                 if max_seq_len <= len(prompt) + summary_token_num:
                     raise ValueError(
                         'The value of max_seq_len is too small, please set a larger value'
@@ -78,23 +79,26 @@ class DataProcess:
                     while True:
                         cur_result_list = []
                         for result in result_list:
-                            if result['end'] - result['start'] > max_content_len:
+                            if (
+                                result['end'] - result['start'] > max_content_len
+                            ):  # value超过max_content_len
                                 logging.warning(
                                     'result["end"] - result ["start"] exceeds max_content_len, which will result in no valid instance being returned'
                                 )
                             if (
-                                result['start'] + 1 <= max_content_len < result['end']
+                                result['start'] + 1
+                                <= max_content_len
+                                < result['end']  # value在max_content_len范围内或者部分在范围内
                                 and result['end'] - result['start'] <= max_content_len
                             ):
-                                # 训练时确保字段的start和end不会被截断，预估如何保证？
                                 max_content_len = result['start']
                                 break
 
                         cur_content = content[:max_content_len]
                         res_content = content[max_content_len:]
-                        if boxes is not None and image is not None:
-                            cur_boxes = boxes[:max_content_len]
-                            res_boxes = boxes[max_content_len:]
+                        # if boxes is not None and image is not None:
+                        #     cur_boxes = boxes[:max_content_len]
+                        #     res_boxes = boxes[max_content_len:]
 
                         while True:
                             # 如果prompt有多个start和end时，默认从小到大
@@ -273,7 +277,7 @@ class DataProcess:
                     f.write(json.dumps(i, ensure_ascii=False) + "\n")
 
     def _add_negative_examples(self, tmp_dict, gt_pages):
-        neg_pages = self.all_ocr_pages - gt_pages
+        neg_pages = set(self.all_ocr_pages) - gt_pages
         for neg_page in neg_pages:
             with open(os.path.join(self.ocr_result, f'{neg_page}.json'), 'r') as f:
                 ocr_results = json.load(f)
@@ -323,9 +327,12 @@ class DataProcess:
         return r_set
 
     def create_ds(self, neg_ratio=1):
-        pdf_names = sorted({i.split('_page_')[0] for i in self.all_ocr_pages})
         train_ds, val_ds = train_test_split(
-            pdf_names, train_size=0.8, test_size=0.2, shuffle=True, random_state=42
+            self.all_pdf_names,
+            train_size=0.8,
+            test_size=0.2,
+            shuffle=True,
+            random_state=42,
         )
 
         train_p = list()
@@ -342,7 +349,7 @@ class DataProcess:
 
                 if not len(cur_content):
                     continue
-
+                # todo:按字段划分正负例
                 elif cur_sub_pdf in train_ds:
                     if not len(cur_gt) or cur_prompt == '无gt':
                         random_prompt = random.choice(self.cls)
@@ -352,7 +359,6 @@ class DataProcess:
 
                 elif cur_sub_pdf in val_ds:
                     if not len(cur_gt) or cur_prompt == '无gt':
-                        pass
                         random_prompt = random.choice(self.cls)
                         val_n.append(f"{random_prompt}\t\t{cur_content}\t0\n")
                     else:
@@ -384,10 +390,6 @@ if __name__ == "__main__":
     cls_path = '/home/youjiachen/workspace/longtext_ie/datasets/contract_v1.1/cls.json'
     label_file = '/home/youjiachen/workspace/longtext_ie/datasets/contract_v1.1/processed_labels_5_7.json'
     data_processer = DataProcess(ocr_file_path, output_path, cls_path)
-    # data_processer.match_label(label_file)  # 匹配标注
+    data_processer.match_label(label_file)  # 匹配标注
     data_processer.save_data()  # 512 切分后保存
     data_processer.create_ds()  # 构造train val
-
-    # %%
-
-    # %%

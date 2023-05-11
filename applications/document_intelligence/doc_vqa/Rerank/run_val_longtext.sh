@@ -36,7 +36,6 @@ python3 -u ./src/train_ce.py \
                    --batch_size 128 \
                    --init_checkpoint "./output/step_11601" \
                    --dev_set "/home/youjiachen/workspace/longtext_ie/datasets/contract_v1.1/preprocess_ds/val.tsv" \
-                   --test_save "data/val.score" \
                    --max_seq_len 512 \
                    --for_cn true \
                    --vocab_path "config/ernie_base_1.0_CN/vocab.txt" \
