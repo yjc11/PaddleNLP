@@ -13,7 +13,10 @@
 # limitations under the License.
 
 import argparse
+import sys
 
+from pathlib import Path
+sys.path.append(str(Path(__file__).parent / '..'))
 from src.utils.args import ArgumentGroup
 
 # yapf: disable

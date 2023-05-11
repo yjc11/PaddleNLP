@@ -3,6 +3,7 @@ import json
 import logging
 import math
 import cv2
+import random
 import sys
 
 import networkx as nx
@@ -21,10 +22,13 @@ from preprocess import rotate_box
 
 
 class DataProcess:
-    def __init__(self, ocr_result, output_path):
+    def __init__(self, ocr_result, output_path, cls_file_path):
         self.ocr_result = Path(ocr_result)
         self.output_path = Path(output_path)
-        self.all_ocr_pages = set(Path(i).stem for i in os.listdir(self.ocr_result))
+        self.all_ocr_pages = sorted(set(i.stem for i in self.ocr_result.glob('[!.]*')))
+        self.reader_output = None
+        with open(cls_file_path, 'r') as f:
+            self.cls = json.load(f)
 
     def __len__(self):
         return len(self.all_ocr_pages)
@@ -258,11 +262,13 @@ class DataProcess:
         data_generator = self.reader(f'{self.output_path}/reader_input.txt')
 
         if not save_path:
-            with open(self.output_path / ' reader_output.txt', 'w') as f:
+            self.reader_output = str(self.output_path / ' reader_output.txt')
+            with open(self.reader_output, 'w') as f:
                 for i in tqdm(data_generator):
                     f.write(json.dumps(i, ensure_ascii=False) + "\n")
         else:
-            with open(Path(save_path) / 'reader_output.txt', 'w') as f:
+            self.reader_output = str(Path(save_path) / 'reader_output.txt')
+            with open(self.reader_output, 'w') as f:
                 for i in tqdm(data_generator):
                     f.write(json.dumps(i, ensure_ascii=False) + "\n")
 
@@ -316,16 +322,56 @@ class DataProcess:
             r_set.append(sorted_nodes)
         return r_set
 
-    def create_ds(self):
-        pdf_names = {i[:-9] for i in self.all_ocr_pages}
-        # print(pdf_names)
+    def create_ds(self, neg_ratio=1):
+        pdf_names = sorted({i.split('_page_')[0] for i in self.all_ocr_pages})
         train_ds, val_ds = train_test_split(
-            list(pdf_names),
-            train_size=0.8,
-            test_size=0.2,
-            shuffle=True,
-            random_state=144,
+            pdf_names, train_size=0.8, test_size=0.2, shuffle=True, random_state=42
         )
+
+        train_p = list()
+        train_n = list()
+        val_p = list()
+        val_n = list()
+        with open(self.reader_output, 'r') as f:
+            for i in f:
+                data = json.loads(i)
+                cur_sub_pdf = data['pagename'].split('_page_')[0]
+                cur_prompt = data['prompt']
+                cur_gt = data['result_list']
+                cur_content = data['content']
+
+                if not len(cur_content):
+                    continue
+
+                elif cur_sub_pdf in train_ds:
+                    if not len(cur_gt) or cur_prompt == '无gt':
+                        random_prompt = random.choice(self.cls)
+                        train_n.append(f"{random_prompt}\t\t{cur_content}\t0\n")
+                    else:
+                        train_p.append(f"{cur_prompt}\t\t{cur_content}\t1\n")
+
+                elif cur_sub_pdf in val_ds:
+                    if not len(cur_gt) or cur_prompt == '无gt':
+                        pass
+                        random_prompt = random.choice(self.cls)
+                        val_n.append(f"{random_prompt}\t\t{cur_content}\t0\n")
+                    else:
+                        val_p.append(f"{cur_prompt}\t\t{cur_content}\t1\n")
+
+        print('train_p:', len(train_p))
+        print('train_n:', len(train_n))
+        print('val_p:', len(val_p))
+        print('val_n:', len(val_n))
+
+        train_tsv = train_p + random.sample(train_n, len(train_p) * neg_ratio)
+        val_tsv = val_p + random.sample(val_n, len(val_p) * neg_ratio)
+        random.shuffle(train_tsv)
+        random.shuffle(val_tsv)
+        with open(self.output_path / 'train.tsv', 'w') as f:
+            f.writelines(train_tsv)
+        with open(self.output_path / 'val.tsv', 'w') as f:
+            f.writelines(val_tsv)
+
         print('train:', len(train_ds))
         print('val:', len(val_ds))
 
@@ -335,8 +381,13 @@ if __name__ == "__main__":
     output_path = (
         '/home/youjiachen/workspace/longtext_ie/datasets/contract_v1.1/preprocess_ds'
     )
+    cls_path = '/home/youjiachen/workspace/longtext_ie/datasets/contract_v1.1/cls.json'
     label_file = '/home/youjiachen/workspace/longtext_ie/datasets/contract_v1.1/processed_labels_5_7.json'
-    data_processer = DataProcess(ocr_file_path, output_path)
-    data_processer.match_label(label_file)  # 匹配标注
+    data_processer = DataProcess(ocr_file_path, output_path, cls_path)
+    # data_processer.match_label(label_file)  # 匹配标注
     data_processer.save_data()  # 512 切分后保存
-    data_processer.create_ds()  # 训练文件
+    data_processer.create_ds()  # 构造train val
+
+    # %%
+
+    # %%

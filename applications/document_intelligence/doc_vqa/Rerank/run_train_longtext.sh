@@ -14,7 +14,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-export CUDA_VISIBLE_DEVICES=2,3
+export CUDA_VISIBLE_DEVICES=3,4
 
 if [ $# != 4 ];then
     echo "USAGE: sh run_train.sh \$TRAIN_SET \$MODEL_PATH \$epoch \$nodes_count"
