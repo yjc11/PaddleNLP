@@ -30,6 +30,7 @@ class DataProcess:
         self.reader_output = None
         with open(cls_file_path, 'r') as f:
             self.cls = json.load(f)
+        self.max_prompt_len = max([len(i) for i in self.cls])
 
     def __len__(self):
         return len(self.all_ocr_pages)
@@ -264,10 +265,10 @@ class DataProcess:
         return res
 
     def save_data(self, save_path=None):
-        data_generator = self.reader(f'{self.output_path}/reader_input.txt')
+        data_generator = self.reader_v2(f'{self.output_path}/reader_input.txt')
 
         if not save_path:
-            self.reader_output = str(self.output_path / ' reader_output.txt')
+            self.reader_output = str(self.output_path / 'reader_output.txt')
             with open(self.reader_output, 'w') as f:
                 for i in tqdm(data_generator):
                     f.write(json.dumps(i, ensure_ascii=False) + "\n")
@@ -287,7 +288,7 @@ class DataProcess:
                 tmp_dict[neg_page]['无gt'] = {
                     'content': ''.join(ocr_texts),
                     'result_list': [],
-                    'prompt': '无gt',
+                    'prompt': '无' * self.max_prompt_len,
                     'pagename': neg_page,
                     'image': None,
                     'bbox': None,
@@ -352,7 +353,9 @@ class DataProcess:
                     continue
                 # todo:按字段划分正负例
                 elif cur_sub_pdf in train_ds:
-                    if not len(cur_gt) or cur_prompt == '无gt':
+                    if (
+                        not len(cur_gt) or cur_prompt == '无gt'
+                    ):  # todo：此处有bug，无gt的页面不一定是负例
                         random_prompt = random.choice(self.cls)
                         train_n.append(f"{random_prompt}\t\t{cur_content}\t0\n")
                     else:
@@ -409,7 +412,7 @@ class DataProcess:
                                 < result['end']  # value在max_content_len范围内或者部分在范围内
                                 and result['end'] - result['start'] <= max_content_len
                             ):
-                                max_content_len = result['start']
+                                max_content_len = result['start']  # 注释
                                 break
 
                         cur_content = content[:max_content_len]
