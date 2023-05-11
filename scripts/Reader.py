@@ -179,17 +179,18 @@ class DataProcess:
             for e in line['annotations']:
                 if not len(e):  # 无标签则跳过
                     continue
+
                 pagename = e['page_name']
+                with open(self.ocr_result / f'{pagename}.json', 'r') as f:
+                    ocr_results = json.load(f)
+                    ocr_bboxes = ocr_results['bboxes']
+                    ocr_texts = ocr_results['texts']
+                    image_size = ocr_results['image_size']
+                    rotate_angle = ocr_results['rotate_angle']
+
                 if pagename not in tmp_dict:
                     # cur_pages.append(pagename)
                     gt_pages.add(pagename)
-
-                    with open(self.ocr_result / f'{pagename}.json', 'r') as f:
-                        ocr_results = json.load(f)
-                        ocr_bboxes = ocr_results['bboxes']
-                        ocr_texts = ocr_results['texts']
-                        image_size = ocr_results['image_size']
-                        rotate_angle = ocr_results['rotate_angle']
 
                     # 初始化当前page的结果
                     tmp_dict[pagename][e['label'][0]] = {
