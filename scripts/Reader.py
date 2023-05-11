@@ -179,17 +179,18 @@ class DataProcess:
             for e in line['annotations']:
                 if not len(e):  # 无标签则跳过
                     continue
+
                 pagename = e['page_name']
+                with open(self.ocr_result / f'{pagename}.json', 'r') as f:
+                    ocr_results = json.load(f)
+                    ocr_bboxes = ocr_results['bboxes']
+                    ocr_texts = ocr_results['texts']
+                    image_size = ocr_results['image_size']
+                    rotate_angle = ocr_results['rotate_angle']
+
                 if pagename not in tmp_dict:
                     # cur_pages.append(pagename)
                     gt_pages.add(pagename)
-
-                    with open(self.ocr_result / f'{pagename}.json', 'r') as f:
-                        ocr_results = json.load(f)
-                        ocr_bboxes = ocr_results['bboxes']
-                        ocr_texts = ocr_results['texts']
-                        image_size = ocr_results['image_size']
-                        rotate_angle = ocr_results['rotate_angle']
 
                     # 初始化当前page的结果
                     tmp_dict[pagename][e['label'][0]] = {
@@ -380,6 +381,77 @@ class DataProcess:
 
         print('train:', len(train_ds))
         print('val:', len(val_ds))
+
+    def reader_v2(self, data_path, max_seq_len=512):
+        json_lines = []
+        with open(data_path, 'r', encoding='utf-8') as f:
+            for line in f:
+                json_line = json.loads(line)
+                page = json_line['pagename']
+                content = json_line['content'].strip()
+                prompt = json_line['prompt']
+
+                summary_token_num = 3  # [CLS] + [SEP] + [SEP]
+                max_content_len = max_seq_len - len(prompt) - summary_token_num
+
+                if len(content) <= max_content_len:
+                    json_lines.append(json_line)
+                else:
+                    result_list = json_line['result_list']
+
+                    accumulate = 0
+                    while True:
+                        cur_result_list = []
+                        for result in result_list:
+                            if (
+                                result['start'] + 1
+                                <= max_content_len
+                                < result['end']  # value在max_content_len范围内或者部分在范围内
+                                and result['end'] - result['start'] <= max_content_len
+                            ):
+                                max_content_len = result['start']
+                                break
+
+                        cur_content = content[:max_content_len]
+                        res_content = content[max_content_len:]
+
+                        # 如果prompt有多个start和end时，默认从小到大
+                        if len(result_list) == 0:
+                            pass
+                        elif result_list[0]['end'] <= max_content_len:
+                            if result_list[0]['end'] > 0:
+                                cur_result = result_list.pop(0)
+                                cur_result_list.append(cur_result)
+
+                        json_line = {
+                            'content': cur_content,
+                            'result_list': cur_result_list,
+                            'prompt': prompt,
+                            'pagename': page,
+                        }
+                        json_lines.append(json_line)
+
+                        for result in result_list:
+                            if result['end'] <= 0:
+                                break
+                            result['start'] -= max_content_len
+                            result['end'] -= max_content_len
+                        accumulate += max_content_len
+                        max_content_len = max_seq_len - len(prompt) - summary_token_num
+                        if len(res_content) == 0:
+                            break
+                        elif len(res_content) < max_content_len:
+                            json_line = {
+                                'content': res_content,
+                                'result_list': result_list,
+                                'prompt': prompt,
+                                'pagename': page,
+                            }
+                            json_lines.append(json_line)
+                            break
+                        else:
+                            content = res_content
+            return json_lines
 
 
 if __name__ == "__main__":
