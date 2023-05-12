@@ -12,6 +12,7 @@ import numpy as np
 
 from tqdm import tqdm
 from copy import deepcopy
+from pprint import pprint
 from pathlib import Path
 from collections import defaultdict
 from sklearn.model_selection import train_test_split
@@ -310,28 +311,33 @@ class DataProcess:
         train_n = list()
         val_p = list()
         val_n = list()
+
+        if self.reader_output is None:
+            self.reader_output = self.output_path / 'reader_output.txt'
         with open(self.reader_output, 'r') as f:
             for i in f:
                 data = json.loads(i)
-                cur_sub_pdf = data['pagename'].split('_page_')[0]
+                cur_pdf = data['pagename'].split('_page_')[0]
                 cur_prompt = data['prompt']
-                cur_gt = data['result_list']
+                cur_gt_info = data['result_list']
                 cur_content = data['content']
+                cur_frag_id = data['interval_id']
 
                 if not len(cur_content):
                     continue
+
                 # todo:按字段划分正负例
-                elif cur_sub_pdf in train_ds:
+                elif cur_pdf in train_ds:
                     if (
-                        not len(cur_gt) or cur_prompt == '无gt'
+                        not len(cur_gt_info) or cur_prompt == '无gt'
                     ):  # todo：此处有bug，无gt的页面不一定是负例
                         random_prompt = random.choice(self.cls)
                         train_n.append(f"{random_prompt}\t\t{cur_content}\t0\n")
                     else:
                         train_p.append(f"{cur_prompt}\t\t{cur_content}\t1\n")
 
-                elif cur_sub_pdf in val_ds:
-                    if not len(cur_gt) or cur_prompt == '无gt':
+                elif cur_pdf in val_ds:
+                    if not len(cur_gt_info) or cur_prompt == '无gt':
                         random_prompt = random.choice(self.cls)
                         val_n.append(f"{random_prompt}\t\t{cur_content}\t0\n")
                     else:
@@ -456,6 +462,23 @@ class DataProcess:
         print('实际的段数', len(json_lines))
         return json_lines
 
+    def tag_statistics(self):
+        stats_dict = defaultdict(lambda: defaultdict(list))
+        with open(self.output_path / 'reader_output.txt', 'r') as f:
+            for line in f:
+                data = json.loads(line)
+                pagename = data['pagename']
+                pdf = pagename.split('_page_')[0]
+                frag = pagename + '_' + str(data['interval_id'])
+                gt_list = data['result_list']
+
+                if gt_list:
+                    prompt = data['prompt']
+                    stats_dict[pdf][frag].append(prompt)
+            pprint(stats_dict)
+
+        return stats_dict
+
     @staticmethod
     def compute_angle(cos, sin):
         angle = math.atan2(sin, cos) * 180 / math.pi
@@ -497,6 +520,7 @@ if __name__ == "__main__":
     cls_path = '/home/youjiachen/workspace/longtext_ie/datasets/contract_v1.1/cls.json'
     label_file = '/home/youjiachen/workspace/longtext_ie/datasets/contract_v1.1/processed_labels_5_7.json'
     data_processer = DataProcess(ocr_file_path, output_path, cls_path)
-    data_processer.match_label(label_file)  # 匹配标注
-    data_processer.cut_and_save_data()  # 512 切分后保存
+    # data_processer.match_label(label_file)  # 匹配标注
+    # data_processer.cut_and_save_data()  # 512 切分后保存
     # data_processer.create_ds()  # 构造train val
+    data_processer.tag_statistics()  # 统计字段
