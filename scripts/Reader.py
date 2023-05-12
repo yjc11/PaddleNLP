@@ -417,7 +417,7 @@ class DataProcess:
         train_p = list()
         train_n = list()
         val_p = list()
-        val_n = list()
+        val_n = set()
         train_pos_dict = defaultdict(lambda: defaultdict(list))
         train_neg_dict = defaultdict(set)
         tag_stats_dict = self.tag_statistics()
@@ -459,7 +459,7 @@ class DataProcess:
                     # 若不是gt页，则构造所有字段的负例
                     if cur_frag not in cur_pdf_gt_page_frags:
                         for tag in self.cls:
-                            val_n.append(f'{tag}\t\t{cur_content}\t0\n')
+                            val_n.add(f'{tag}\t\t{cur_content}\t0\n')
                     # 若是gt页，则对gt字段构造正例，对所有非gt字段构造负例
                     elif cur_frag in cur_pdf_gt_page_frags:
                         cur_page_gt_tag = cur_pdf_gt_page_frags[cur_frag]
@@ -468,7 +468,7 @@ class DataProcess:
 
                         redundants = list(set(cur_page_gt_tag) ^ set(self.cls))
                         for tag in redundants:
-                            val_n.append(f'{tag}\t\t{cur_content}\t0\n')
+                            val_n.add(f'{tag}\t\t{cur_content}\t0\n')
 
             # 训练集构造逻辑(按字段 1:1 构造负例)
             # 1.统计正例的各字段数量
@@ -483,13 +483,15 @@ class DataProcess:
                 train_n.extend(sample_neg)
 
         train_tsv = train_p + train_n
-        val_tsv = val_p + val_n
+        val_tsv = val_p + list(val_n)
         random.shuffle(train_tsv)
         random.shuffle(val_tsv)
         with open(self.output_path / 'train.tsv', 'w') as f:
             f.writelines(train_tsv)
         with open(self.output_path / 'val.tsv', 'w') as f:
             f.writelines(val_tsv)
+        print('---negative---')
+        pprint({k: len(v) for k, v in train_neg_dict.items()})
 
         print('---PDF---')
         print('train:', len(train_ds))
