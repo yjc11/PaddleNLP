@@ -455,7 +455,8 @@ class DataProcess:
                             'interval_id': frag_id,
                         }
                         json_lines.append(_json_line)
-                    cur_page_fra_num = 0
+
+                    cur_gt_id = 0
                     _map = dict()
                     tmp_json_lines = []
                     for res in results:
@@ -471,7 +472,7 @@ class DataProcess:
                             )
 
                         else:
-                            _map[res[0]] = cur_page_fra_num
+                            _map[res[0]] = cur_gt_id
                             _json_line = {
                                 'content': cur_content,
                                 'result_list': cur_result_list,
@@ -480,7 +481,7 @@ class DataProcess:
                                 'interval_id': res[0],
                             }
                             tmp_json_lines.append(_json_line)
-                            cur_page_fra_num += 1
+                            cur_gt_id += 1
 
                     json_lines.extend(tmp_json_lines)
         print('理论上的段数：', c)
