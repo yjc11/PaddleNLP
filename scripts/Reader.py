@@ -297,38 +297,6 @@ class DataProcess:
 
         return tmp_dict
 
-    @staticmethod
-    def compute_angle(cos, sin):
-        angle = math.atan2(sin, cos) * 180 / math.pi
-        return angle
-
-    @staticmethod
-    def refine_box(r, img_w, img_h):
-        """
-        box = [[x1, y1], [x2, y2], [x3, y3], [x4, y4]]
-        """
-        angle = r['rotation']
-        R = cv2.getRotationMatrix2D(angle=angle, center=(img_w / 2, img_h / 2), scale=1)
-        r['box'] = np.array(r['box']).reshape(-1, 2)
-        box_hom = np.hstack((r['box'], np.ones((4, 1))))
-        box_rotated = np.dot(R, box_hom.T).T[:, :2]
-        refined_box = box_rotated.tolist()
-
-        return refined_box
-
-    @staticmethod
-    def _get_relation_set(relations):
-        G = nx.DiGraph()
-        for relation in relations:
-            from_id, to_id = relation['from_id'], relation['to_id']
-            G.add_edge(from_id, to_id)
-        r_set = []
-        for component in nx.connected_components(G.to_undirected()):
-            # 对每个连通分量进行拓扑排序
-            sorted_nodes = list(nx.topological_sort(G.subgraph(component)))
-            r_set.append(sorted_nodes)
-        return r_set
-
     def create_ds(self, neg_ratio=1):
         train_ds, val_ds = train_test_split(
             self.all_pdf_names,
@@ -387,7 +355,7 @@ class DataProcess:
         print('val:', len(val_ds))
 
     def reader_v2(self, data_path, max_seq_len=512):
-        json_lines = []
+        json_lines = list()
         c = 0
         with open(data_path, 'r', encoding='utf-8') as f:
             for ids, line in enumerate(f):
@@ -426,7 +394,7 @@ class DataProcess:
                         np.arange(i['start'], i['end'])
                         for i in json_line['result_list']
                     ]
-                    results = []
+                    results = list()
                     for ids, content_interval in enumerate(content_idx_sets):
                         for prompt_interval in prompt_se_sets:
                             intersection = sorted(
@@ -458,12 +426,11 @@ class DataProcess:
 
                     cur_gt_id = 0
                     _map = dict()
-                    tmp_json_lines = []
+                    tmp_json_lines = list()
                     for res in results:
                         cur_content = content[res[1][0] : res[1][-1] + 1]
                         start = res[2][0] - res[0] * (max_content_len - 1)
                         end = res[2][-1] + 1 - res[0] * (max_content_len - 1)
-
                         cur_result_list = [{'start': int(start), 'end': int(end)}]
                         if res[0] in _map:
                             json_id = _map[res[0]]
@@ -484,9 +451,42 @@ class DataProcess:
                             cur_gt_id += 1
 
                     json_lines.extend(tmp_json_lines)
+
         print('理论上的段数：', c)
         print('实际的段数', len(json_lines))
         return json_lines
+
+    @staticmethod
+    def compute_angle(cos, sin):
+        angle = math.atan2(sin, cos) * 180 / math.pi
+        return angle
+
+    @staticmethod
+    def refine_box(r, img_w, img_h):
+        """
+        box = [[x1, y1], [x2, y2], [x3, y3], [x4, y4]]
+        """
+        angle = r['rotation']
+        R = cv2.getRotationMatrix2D(angle=angle, center=(img_w / 2, img_h / 2), scale=1)
+        r['box'] = np.array(r['box']).reshape(-1, 2)
+        box_hom = np.hstack((r['box'], np.ones((4, 1))))
+        box_rotated = np.dot(R, box_hom.T).T[:, :2]
+        refined_box = box_rotated.tolist()
+
+        return refined_box
+
+    @staticmethod
+    def _get_relation_set(relations):
+        G = nx.DiGraph()
+        for relation in relations:
+            from_id, to_id = relation['from_id'], relation['to_id']
+            G.add_edge(from_id, to_id)
+        r_set = []
+        for component in nx.connected_components(G.to_undirected()):
+            # 对每个连通分量进行拓扑排序
+            sorted_nodes = list(nx.topological_sort(G.subgraph(component)))
+            r_set.append(sorted_nodes)
+        return r_set
 
 
 if __name__ == "__main__":
