@@ -5,6 +5,7 @@ import math
 import cv2
 import random
 import sys
+import copy
 
 import networkx as nx
 import numpy as np
@@ -387,74 +388,101 @@ class DataProcess:
 
     def reader_v2(self, data_path, max_seq_len=512):
         json_lines = []
+        c = 0
         with open(data_path, 'r', encoding='utf-8') as f:
-            for line in f:
+            for ids, line in enumerate(f):
                 json_line = json.loads(line)
                 page = json_line['pagename']
                 content = json_line['content'].strip()
                 prompt = json_line['prompt']
 
+                if not len(content):
+                    continue
+
                 summary_token_num = 3  # [CLS] + [SEP] + [SEP]
-                max_content_len = max_seq_len - len(prompt) - summary_token_num
+                max_content_len = max_seq_len - self.max_prompt_len - summary_token_num
 
-                if len(content) <= max_content_len:
-                    json_lines.append(json_line)
-                else:
-                    result_list = json_line['result_list']
+                arr = np.arange(0, len(content))
+                content_idx_sets = [
+                    arr[i : i + max_content_len]
+                    for i in range(0, len(arr), max_content_len)
+                ]
+                c += len(content_idx_sets)
 
-                    accumulate = 0
-                    while True:
-                        cur_result_list = []
-                        for result in result_list:
-                            if (
-                                result['start'] + 1
-                                <= max_content_len
-                                < result['end']  # value在max_content_len范围内或者部分在范围内
-                                and result['end'] - result['start'] <= max_content_len
-                            ):
-                                max_content_len = result['start']  # 注释
-                                break
-
-                        cur_content = content[:max_content_len]
-                        res_content = content[max_content_len:]
-
-                        # 如果prompt有多个start和end时，默认从小到大
-                        if len(result_list) == 0:
-                            pass
-                        elif result_list[0]['end'] <= max_content_len:
-                            if result_list[0]['end'] > 0:
-                                cur_result = result_list.pop(0)
-                                cur_result_list.append(cur_result)
-
-                        json_line = {
+                if not len(json_line['result_list']):  # 对无gt的page切片存储
+                    for idc, interval in enumerate(content_idx_sets):
+                        cur_content = content[interval[0] : interval[-1] + 1]
+                        if len(cur_content) > 500:
+                            print(111111)
+                        _json_line = {
                             'content': cur_content,
-                            'result_list': cur_result_list,
+                            'result_list': [],
                             'prompt': prompt,
                             'pagename': page,
+                            'interval_id': idc,
                         }
-                        json_lines.append(json_line)
+                        json_lines.append(_json_line)
 
-                        for result in result_list:
-                            if result['end'] <= 0:
-                                break
-                            result['start'] -= max_content_len
-                            result['end'] -= max_content_len
-                        accumulate += max_content_len
-                        max_content_len = max_seq_len - len(prompt) - summary_token_num
-                        if len(res_content) == 0:
-                            break
-                        elif len(res_content) < max_content_len:
-                            json_line = {
-                                'content': res_content,
-                                'result_list': result_list,
+                else:  # 对有gt的page进行切片存储
+                    prompt_se_sets = [
+                        np.arange(i['start'], i['end'])
+                        for i in json_line['result_list']
+                    ]
+                    results = []
+                    for ids, content_interval in enumerate(content_idx_sets):
+                        for prompt_interval in prompt_se_sets:
+                            intersection = sorted(
+                                set(prompt_interval) & set(content_interval)
+                            )
+                            if not len(intersection):
+                                continue
+                            else:
+                                results.append(
+                                    (ids, content_interval, intersection)
+                                )  # 片段id，内容区间，        gt区间
+
+                    # 对无gt的碎片进行存储
+                    gt_fragment = set(_[0] for _ in results)
+                    total_fragment = set(_ for _ in range(len(content_idx_sets)))
+                    no_gt_fragment = total_fragment - gt_fragment
+                    for frag_id in no_gt_fragment:
+                        no_gt_interval = content_idx_sets[frag_id]
+                        s, e = no_gt_interval[0], no_gt_interval[-1]
+                        cur_content = content[s : e + 1]
+                        _json_line = {
+                            'content': cur_content,
+                            'result_list': [],
+                            'prompt': prompt,
+                            'pagename': page,
+                            'interval_id': frag_id,
+                        }
+                        json_lines.append(_json_line)
+
+                    _map = dict()
+                    for idx, res in enumerate(results):
+                        # todo:非第一段的时候，start和end做变化
+                        cur_content = content[res[1][0] : res[1][-1] + 1]
+                        start = res[2][0] - res[0] * max_content_len - 1
+                        end = res[2][-1] + 1 - res[0] * max_content_len - 1
+
+                        cur_result_list = [{'start': int(start), 'end': int(end)}]
+                        if res[0] in _map:
+                            json_id = _map[res[0]]
+                            json_lines[json_id]['result_list'].extend(cur_result_list)
+
+                        else:
+                            _map[res[0]] = idx
+                            _json_line = {
+                                'content': cur_content,
+                                'result_list': cur_result_list,
                                 'prompt': prompt,
                                 'pagename': page,
+                                'interval_id': res[0],
                             }
-                            json_lines.append(json_line)
-                            break
-                        else:
-                            content = res_content
-            return json_lines
+                            json_lines.append(_json_line)
+        print('理论上的段数：', c)
+        print('实际的段数', len(json_lines))
+        return json_lines
 
 
 if __name__ == "__main__":
@@ -465,6 +493,6 @@ if __name__ == "__main__":
     cls_path = '/home/youjiachen/workspace/longtext_ie/datasets/contract_v1.1/cls.json'
     label_file = '/home/youjiachen/workspace/longtext_ie/datasets/contract_v1.1/processed_labels_5_7.json'
     data_processer = DataProcess(ocr_file_path, output_path, cls_path)
-    data_processer.match_label(label_file)  # 匹配标注
+    # # data_processer.match_label(label_file)  # 匹配标注
     data_processer.save_data()  # 512 切分后保存
-    data_processer.create_ds()  # 构造train val
+    # data_processer.create_ds()  # 构造train val
