@@ -412,8 +412,6 @@ class DataProcess:
                 if not len(json_line['result_list']):  # 对无gt的page切片存储
                     for idc, interval in enumerate(content_idx_sets):
                         cur_content = content[interval[0] : interval[-1] + 1]
-                        if len(cur_content) > 500:
-                            print(111111)
                         _json_line = {
                             'content': cur_content,
                             'result_list': [],
@@ -460,7 +458,7 @@ class DataProcess:
                     cur_page_fra_num = 0
                     _map = dict()
                     tmp_json_lines = []
-                    for idx, res in enumerate(results):
+                    for res in results:
                         cur_content = content[res[1][0] : res[1][-1] + 1]
                         start = res[2][0] - res[0] * (max_content_len - 1)
                         end = res[2][-1] + 1 - res[0] * (max_content_len - 1)
@@ -473,7 +471,7 @@ class DataProcess:
                             )
 
                         else:
-                            _map[res[0]] = cur_page_fra_num  # ！！！bug
+                            _map[res[0]] = cur_page_fra_num
                             _json_line = {
                                 'content': cur_content,
                                 'result_list': cur_result_list,
