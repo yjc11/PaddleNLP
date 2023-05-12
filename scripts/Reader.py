@@ -402,7 +402,7 @@ class DataProcess:
         print('实际的段数', len(json_lines))
         return json_lines
 
-    def create_ds(self, neg_ratio=1):
+    def create_ds(self):
         if self.reader_output is None:
             self.reader_output = self.output_path / 'reader_output.txt'
 
@@ -482,7 +482,7 @@ class DataProcess:
                 sample_neg = random.sample(train_neg_dict[tag], k=num)
                 train_n.extend(sample_neg)
 
-        train_tsv = train_p + random.sample(train_n, len(train_p) * neg_ratio)
+        train_tsv = train_p + train_n
         val_tsv = val_p + val_n
         random.shuffle(train_tsv)
         random.shuffle(val_tsv)
