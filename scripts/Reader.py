@@ -457,21 +457,23 @@ class DataProcess:
                             'interval_id': frag_id,
                         }
                         json_lines.append(_json_line)
-
+                    cur_page_fra_num = 0
                     _map = dict()
+                    tmp_json_lines = []
                     for idx, res in enumerate(results):
-                        # todo:非第一段的时候，start和end做变化
                         cur_content = content[res[1][0] : res[1][-1] + 1]
-                        start = res[2][0] - res[0] * max_content_len - 1
-                        end = res[2][-1] + 1 - res[0] * max_content_len - 1
+                        start = res[2][0] - res[0] * (max_content_len - 1)
+                        end = res[2][-1] + 1 - res[0] * (max_content_len - 1)
 
                         cur_result_list = [{'start': int(start), 'end': int(end)}]
                         if res[0] in _map:
                             json_id = _map[res[0]]
-                            json_lines[json_id]['result_list'].extend(cur_result_list)
+                            tmp_json_lines[json_id]['result_list'].extend(
+                                cur_result_list
+                            )
 
                         else:
-                            _map[res[0]] = idx
+                            _map[res[0]] = cur_page_fra_num  # ！！！bug
                             _json_line = {
                                 'content': cur_content,
                                 'result_list': cur_result_list,
@@ -479,7 +481,10 @@ class DataProcess:
                                 'pagename': page,
                                 'interval_id': res[0],
                             }
-                            json_lines.append(_json_line)
+                            tmp_json_lines.append(_json_line)
+                            cur_page_fra_num += 1
+
+                    json_lines.extend(tmp_json_lines)
         print('理论上的段数：', c)
         print('实际的段数', len(json_lines))
         return json_lines
