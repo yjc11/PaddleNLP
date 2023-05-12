@@ -314,13 +314,13 @@ class DataProcess:
                     continue
 
                 summary_token_num = 3  # [CLS] + [SEP] + [SEP]
-                max_content_len = max_seq_len - self.max_prompt_len - summary_token_num 500
+                max_content_len = max_seq_len - self.max_prompt_len - summary_token_num
 
                 arr = np.arange(0, len(content))
                 content_idx_sets = [
                     arr[i : i + max_content_len]
                     for i in range(0, len(arr), max_content_len)
-                ] # 【【0，1，2，。。499】 ，【500，。。】】
+                ]  #
                 c += len(content_idx_sets)
 
                 if not len(json_line['result_list']):  # 对无gt的page切片存储
@@ -356,7 +356,7 @@ class DataProcess:
                     # 对无gt的碎片进行存储
                     gt_fragment = set(_[0] for _ in results)
                     total_fragment = set(_ for _ in range(len(content_idx_sets)))
-                    no_gt_fragment = total_fragment - gt_fragment 
+                    no_gt_fragment = total_fragment - gt_fragment
                     for frag_id in no_gt_fragment:
                         no_gt_interval = content_idx_sets[frag_id]
                         s, e = no_gt_interval[0], no_gt_interval[-1]
@@ -375,7 +375,7 @@ class DataProcess:
                     tmp_json_lines = list()
                     for res in results:
                         cur_content = content[res[1][0] : res[1][-1] + 1]
-                        start = res[2][0] - res[0] * (max_content_len - 1) 
+                        start = res[2][0] - res[0] * (max_content_len - 1)
                         end = res[2][-1] + 1 - res[0] * (max_content_len - 1)
                         cur_result_list = [{'start': int(start), 'end': int(end)}]
                         if res[0] in _map:
