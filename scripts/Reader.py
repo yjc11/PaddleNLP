@@ -14,7 +14,8 @@ from tqdm import tqdm
 from copy import deepcopy
 from pprint import pprint
 from pathlib import Path
-from collections import defaultdict
+from itertools import chain
+from collections import defaultdict, Counter
 from sklearn.model_selection import train_test_split
 
 sys.path.append('/home/youjiachen/PaddleNLP/paddlenlp')
@@ -298,69 +299,8 @@ class DataProcess:
 
         return tmp_dict
 
-    def create_ds(self, neg_ratio=1):
-        train_ds, val_ds = train_test_split(
-            self.all_pdf_names,
-            train_size=0.8,
-            test_size=0.2,
-            shuffle=True,
-            random_state=42,
-        )
-
-        train_p = list()
-        train_n = list()
-        val_p = list()
-        val_n = list()
-
-        if self.reader_output is None:
-            self.reader_output = self.output_path / 'reader_output.txt'
-        with open(self.reader_output, 'r') as f:
-            for i in f:
-                data = json.loads(i)
-                cur_pdf = data['pagename'].split('_page_')[0]
-                cur_prompt = data['prompt']
-                cur_gt_info = data['result_list']
-                cur_content = data['content']
-                cur_frag_id = data['interval_id']
-
-                if not len(cur_content):
-                    continue
-
-                # todo:按字段划分正负例
-                elif cur_pdf in train_ds:
-                    if (
-                        not len(cur_gt_info) or cur_prompt == '无gt'
-                    ):  # todo：此处有bug，无gt的页面不一定是负例
-                        random_prompt = random.choice(self.cls)
-                        train_n.append(f"{random_prompt}\t\t{cur_content}\t0\n")
-                    else:
-                        train_p.append(f"{cur_prompt}\t\t{cur_content}\t1\n")
-
-                elif cur_pdf in val_ds:
-                    if not len(cur_gt_info) or cur_prompt == '无gt':
-                        random_prompt = random.choice(self.cls)
-                        val_n.append(f"{random_prompt}\t\t{cur_content}\t0\n")
-                    else:
-                        val_p.append(f"{cur_prompt}\t\t{cur_content}\t1\n")
-
-        print('train_p:', len(train_p))
-        print('train_n:', len(train_n))
-        print('val_p:', len(val_p))
-        print('val_n:', len(val_n))
-
-        train_tsv = train_p + random.sample(train_n, len(train_p) * neg_ratio)
-        val_tsv = val_p + random.sample(val_n, len(val_p) * neg_ratio)
-        random.shuffle(train_tsv)
-        random.shuffle(val_tsv)
-        with open(self.output_path / 'train.tsv', 'w') as f:
-            f.writelines(train_tsv)
-        with open(self.output_path / 'val.tsv', 'w') as f:
-            f.writelines(val_tsv)
-
-        print('train:', len(train_ds))
-        print('val:', len(val_ds))
-
     def reader_v2(self, data_path, max_seq_len=512):
+        # todo: 优化点1:单页内容的gt合并处理; 优化点2:根据bbox切分
         json_lines = list()
         c = 0
         with open(data_path, 'r', encoding='utf-8') as f:
@@ -374,13 +314,13 @@ class DataProcess:
                     continue
 
                 summary_token_num = 3  # [CLS] + [SEP] + [SEP]
-                max_content_len = max_seq_len - self.max_prompt_len - summary_token_num
+                max_content_len = max_seq_len - self.max_prompt_len - summary_token_num 500
 
                 arr = np.arange(0, len(content))
                 content_idx_sets = [
                     arr[i : i + max_content_len]
                     for i in range(0, len(arr), max_content_len)
-                ]
+                ] # 【【0，1，2，。。499】 ，【500，。。】】
                 c += len(content_idx_sets)
 
                 if not len(json_line['result_list']):  # 对无gt的page切片存储
@@ -416,7 +356,7 @@ class DataProcess:
                     # 对无gt的碎片进行存储
                     gt_fragment = set(_[0] for _ in results)
                     total_fragment = set(_ for _ in range(len(content_idx_sets)))
-                    no_gt_fragment = total_fragment - gt_fragment
+                    no_gt_fragment = total_fragment - gt_fragment 
                     for frag_id in no_gt_fragment:
                         no_gt_interval = content_idx_sets[frag_id]
                         s, e = no_gt_interval[0], no_gt_interval[-1]
@@ -435,7 +375,7 @@ class DataProcess:
                     tmp_json_lines = list()
                     for res in results:
                         cur_content = content[res[1][0] : res[1][-1] + 1]
-                        start = res[2][0] - res[0] * (max_content_len - 1)
+                        start = res[2][0] - res[0] * (max_content_len - 1) 
                         end = res[2][-1] + 1 - res[0] * (max_content_len - 1)
                         cur_result_list = [{'start': int(start), 'end': int(end)}]
                         if res[0] in _map:
@@ -462,6 +402,108 @@ class DataProcess:
         print('实际的段数', len(json_lines))
         return json_lines
 
+    def create_ds(self, neg_ratio=1):
+        if self.reader_output is None:
+            self.reader_output = self.output_path / 'reader_output.txt'
+
+        train_ds, val_ds = train_test_split(
+            self.all_pdf_names,
+            train_size=0.8,
+            test_size=0.2,
+            shuffle=True,
+            random_state=42,
+        )
+
+        train_p = list()
+        train_n = list()
+        val_p = list()
+        val_n = list()
+        train_pos_dict = defaultdict(lambda: defaultdict(list))
+        train_neg_dict = defaultdict(list)
+        tag_stats_dict = self.tag_statistics()
+        with open(self.reader_output, 'r') as f:
+            for i in f:
+                data = json.loads(i)
+                cur_pagename = data['pagename']
+                cur_pdf = cur_pagename.split('_page_')[0]
+                cur_frag = cur_pagename + '~$~' + str(data['interval_id'])
+                cur_content = data['content']
+
+                if not len(cur_content):
+                    continue
+
+                # 训练候选集构造逻辑
+                cur_pdf_gt_page_frags = tag_stats_dict[cur_pdf]
+                if cur_pdf in train_ds:
+                    # 如果page不存在于字段统计字典中，判断是否为纯负例
+                    if cur_frag not in cur_pdf_gt_page_frags:
+                        for tag in self.cls:
+                            train_neg_dict[tag].append(f'{tag}\t\t{cur_content}\t0\n')
+                    # 如果page存在于字段统计字典中,则根据差集构建负例
+                    elif cur_frag in cur_pdf_gt_page_frags:
+                        # 构造负例
+                        cur_page_gt_tag = cur_pdf_gt_page_frags[cur_frag]
+                        redundants = list(set(cur_page_gt_tag) ^ set(self.cls))
+                        for tag in redundants:
+                            train_neg_dict[tag].append(f'{tag}\t\t{cur_content}\t0\n')
+
+                        # 构造正例
+                        for tag in cur_page_gt_tag:
+                            train_pos_dict[cur_pdf][tag].append(
+                                f'{tag}\t\t{cur_content}\t1\n'
+                            )
+                            train_p.append(f'{tag}\t\t{cur_content}\t1\n')
+
+                # 验证集构造逻辑
+                elif cur_pdf in val_ds:
+                    # 若不是gt页，则构造所有字段的负例
+                    if cur_frag not in cur_pdf_gt_page_frags:
+                        for tag in self.cls:
+                            val_n.append(f'{tag}\t\t{cur_content}\t0\n')
+                    # 若是gt页，则对gt字段构造正例，对所有非gt字段构造负例
+                    elif cur_frag in cur_pdf_gt_page_frags:
+                        cur_page_gt_tag = cur_pdf_gt_page_frags[cur_frag]
+                        for tag in cur_pdf_gt_page_frags[cur_frag]:
+                            val_p.append(f'{tag}\t\t{cur_content}\t1\n')
+
+                        redundants = list(set(cur_page_gt_tag) ^ set(self.cls))
+                        for tag in redundants:
+                            val_n.append(f'{tag}\t\t{cur_content}\t0\n')
+
+            # 训练集构造逻辑(按字段 1:1 构造负例)
+            # 1.统计正例的各字段数量
+            stats_pos_num = dict()
+            for tag2data in train_pos_dict.values():
+                for tag, data in tag2data.items():
+                    stats_pos_num[tag] = stats_pos_num.get(tag, 0) + len(data)
+
+            # 2. 根据字段和正例数采样负例
+            for tag, num in stats_pos_num.items():
+                sample_neg = random.sample(train_neg_dict[tag], k=num)
+                train_n.extend(sample_neg)
+
+        train_tsv = train_p + random.sample(train_n, len(train_p) * neg_ratio)
+        val_tsv = val_p + val_n
+        random.shuffle(train_tsv)
+        random.shuffle(val_tsv)
+        with open(self.output_path / 'train.tsv', 'w') as f:
+            f.writelines(train_tsv)
+        with open(self.output_path / 'val.tsv', 'w') as f:
+            f.writelines(val_tsv)
+
+        print('---PDF---')
+        print('train:', len(train_ds))
+        print('val:', len(val_ds))
+
+        print('---page_frag_ds---')
+        print('train_p:', len(train_p))
+        print('train_n:', len(train_n))
+        print('val_p:', len(val_p))
+        print('val_n:', len(val_n))
+
+        print('---pos_tag_nums---')
+        pprint(stats_pos_num)
+
     def tag_statistics(self):
         stats_dict = defaultdict(lambda: defaultdict(list))
         with open(self.output_path / 'reader_output.txt', 'r') as f:
@@ -469,13 +511,13 @@ class DataProcess:
                 data = json.loads(line)
                 pagename = data['pagename']
                 pdf = pagename.split('_page_')[0]
-                frag = pagename + '_' + str(data['interval_id'])
+                frag = pagename + '~$~' + str(data['interval_id'])
                 gt_list = data['result_list']
 
                 if gt_list:
                     prompt = data['prompt']
                     stats_dict[pdf][frag].append(prompt)
-            pprint(stats_dict)
+            # pprint(stats_dict)
 
         return stats_dict
 
@@ -520,7 +562,7 @@ if __name__ == "__main__":
     cls_path = '/home/youjiachen/workspace/longtext_ie/datasets/contract_v1.1/cls.json'
     label_file = '/home/youjiachen/workspace/longtext_ie/datasets/contract_v1.1/processed_labels_5_7.json'
     data_processer = DataProcess(ocr_file_path, output_path, cls_path)
-    # data_processer.match_label(label_file)  # 匹配标注
-    # data_processer.cut_and_save_data()  # 512 切分后保存
-    # data_processer.create_ds()  # 构造train val
+    data_processer.match_label(label_file)  # 匹配标注
+    data_processer.cut_and_save_data()  # 512 切分后保存
+    data_processer.create_ds()  # 构造train val
     data_processer.tag_statistics()  # 统计字段
