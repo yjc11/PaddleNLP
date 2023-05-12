@@ -419,7 +419,7 @@ class DataProcess:
         val_p = list()
         val_n = list()
         train_pos_dict = defaultdict(lambda: defaultdict(list))
-        train_neg_dict = defaultdict(list)
+        train_neg_dict = defaultdict(set)
         tag_stats_dict = self.tag_statistics()
         with open(self.reader_output, 'r') as f:
             for i in f:
@@ -438,14 +438,14 @@ class DataProcess:
                     # 如果page不存在于字段统计字典中，判断是否为纯负例
                     if cur_frag not in cur_pdf_gt_page_frags:
                         for tag in self.cls:
-                            train_neg_dict[tag].append(f'{tag}\t\t{cur_content}\t0\n')
+                            train_neg_dict[tag].add(f'{tag}\t\t{cur_content}\t0\n')
                     # 如果page存在于字段统计字典中,则根据差集构建负例
                     elif cur_frag in cur_pdf_gt_page_frags:
                         # 构造负例
                         cur_page_gt_tag = cur_pdf_gt_page_frags[cur_frag]
                         redundants = list(set(cur_page_gt_tag) ^ set(self.cls))
                         for tag in redundants:
-                            train_neg_dict[tag].append(f'{tag}\t\t{cur_content}\t0\n')
+                            train_neg_dict[tag].add(f'{tag}\t\t{cur_content}\t0\n')
 
                         # 构造正例
                         for tag in cur_page_gt_tag:
