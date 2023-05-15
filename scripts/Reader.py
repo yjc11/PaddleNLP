@@ -28,6 +28,7 @@ class DataProcess:
     def __init__(self, ocr_result, output_path, cls_file_path):
         self.ocr_result = Path(ocr_result)
         self.output_path = Path(output_path)
+        self.output_path.mkdir(exist_ok=True, parents=True)
         self.all_ocr_pages = sorted(set(i.stem for i in self.ocr_result.glob('[!.]*')))
         self.all_pdf_names = sorted({i.split('_page_')[0] for i in self.all_ocr_pages})
         self.reader_output = None
@@ -414,11 +415,11 @@ class DataProcess:
             random_state=42,
         )
 
-        train_p = list()
+        train_p = set()
         train_n = list()
-        val_p = list()
+        val_p = set()
         val_n = set()
-        train_pos_dict = defaultdict(lambda: defaultdict(list))
+        train_pos_dict = defaultdict(lambda: defaultdict(set))
         train_neg_dict = defaultdict(set)
         tag_stats_dict = self.tag_statistics()
         with open(self.reader_output, 'r') as f:
@@ -438,37 +439,41 @@ class DataProcess:
                     # 如果page不存在于字段统计字典中，判断是否为纯负例
                     if cur_frag not in cur_pdf_gt_page_frags:
                         for tag in self.cls:
-                            train_neg_dict[tag].add(f'{tag}\t\t{cur_content}\t0\n')
+                            train_neg_dict[tag].add(
+                                f'{tag}\t\t{cur_content}\t{cur_frag}\t0\n'
+                            )
                     # 如果page存在于字段统计字典中,则根据差集构建负例
                     elif cur_frag in cur_pdf_gt_page_frags:
                         # 构造负例
                         cur_page_gt_tag = cur_pdf_gt_page_frags[cur_frag]
                         redundants = list(set(cur_page_gt_tag) ^ set(self.cls))
                         for tag in redundants:
-                            train_neg_dict[tag].add(f'{tag}\t\t{cur_content}\t0\n')
+                            train_neg_dict[tag].add(
+                                f'{tag}\t\t{cur_content}\t{cur_frag}\t0\n'
+                            )
 
                         # 构造正例
                         for tag in cur_page_gt_tag:
-                            train_pos_dict[cur_pdf][tag].append(
-                                f'{tag}\t\t{cur_content}\t1\n'
+                            train_pos_dict[cur_pdf][tag].add(
+                                f'{tag}\t\t{cur_content}\t{cur_frag}\t1\n'
                             )
-                            train_p.append(f'{tag}\t\t{cur_content}\t1\n')
+                            train_p.add(f'{tag}\t\t{cur_content}\t{cur_frag}\t1\n')
 
                 # 验证集构造逻辑
                 elif cur_pdf in val_ds:
                     # 若不是gt页，则构造所有字段的负例
                     if cur_frag not in cur_pdf_gt_page_frags:
                         for tag in self.cls:
-                            val_n.add(f'{tag}\t\t{cur_content}\t0\n')
+                            val_n.add(f'{tag}\t\t{cur_content}\t{cur_frag}\t0\n')
                     # 若是gt页，则对gt字段构造正例，对所有非gt字段构造负例
                     elif cur_frag in cur_pdf_gt_page_frags:
                         cur_page_gt_tag = cur_pdf_gt_page_frags[cur_frag]
                         for tag in cur_pdf_gt_page_frags[cur_frag]:
-                            val_p.append(f'{tag}\t\t{cur_content}\t1\n')
+                            val_p.add(f'{tag}\t\t{cur_content}\t{cur_frag}\t1\n')
 
                         redundants = list(set(cur_page_gt_tag) ^ set(self.cls))
                         for tag in redundants:
-                            val_n.add(f'{tag}\t\t{cur_content}\t0\n')
+                            val_n.add(f'{tag}\t\t{cur_content}\t{cur_frag}\t0\n')
 
             # 训练集构造逻辑(按字段 1:1 构造负例)
             # 1.统计正例的各字段数量
@@ -482,8 +487,8 @@ class DataProcess:
                 sample_neg = random.sample(train_neg_dict[tag], k=num)
                 train_n.extend(sample_neg)
 
-        train_tsv = train_p + train_n
-        val_tsv = val_p + list(val_n)
+        train_tsv = list(train_p) + train_n
+        val_tsv = list(val_p) + list(val_n)
         random.shuffle(train_tsv)
         random.shuffle(val_tsv)
         with open(self.output_path / 'train.tsv', 'w') as f:
@@ -559,7 +564,7 @@ class DataProcess:
 if __name__ == "__main__":
     ocr_file_path = '/home/youjiachen/workspace/longtext_ie/datasets/contract_v1.0/dataelem_ocr_res_rotateupright_true'
     output_path = (
-        '/home/youjiachen/workspace/longtext_ie/datasets/contract_v1.1/preprocess_ds'
+        '/home/youjiachen/workspace/longtext_ie/datasets/contract_v1.2/preprocess_ds'
     )
     cls_path = '/home/youjiachen/workspace/longtext_ie/datasets/contract_v1.1/cls.json'
     label_file = '/home/youjiachen/workspace/longtext_ie/datasets/contract_v1.1/processed_labels_5_7.json'
